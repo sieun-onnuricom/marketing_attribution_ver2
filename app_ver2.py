@@ -260,22 +260,46 @@ st.markdown(f"""
         border: 1px solid {NAVY_LIGHT} !important;
         border-left: 4px solid {ACCENT} !important;
         border-radius: 8px !important;
-        color: {TEXT} !important;
+        color: #FFFFFF !important;
     }}
     div[data-testid="stAlert"] *,
     div[data-testid="stAlertContainer"] *,
     [data-baseweb="notification"] * {{
-        color: {TEXT} !important;
+        color: #FFFFFF !important;
         background-color: transparent !important;
     }}
     div[data-testid="stAlert"] svg {{ fill: {ACCENT} !important; }}
+    
+    /* 캡션 (기본 회색) */
     [data-testid="stCaptionContainer"] * {{ color: {TEXT_MUTED} !important; }}
+    
+    /* expander 본체 */
     [data-testid="stExpander"] {{
-        background-color: {SURFACE};
-        border: 1px solid {BORDER};
+        background-color: {SURFACE} !important;
+        border: 1px solid {BORDER} !important;
         border-radius: 8px;
     }}
-    [data-testid="stExpander"] summary {{ color: {TEXT} !important; }}
+    [data-testid="stExpander"] summary {{ color: #FFFFFF !important; }}
+    [data-testid="stExpander"] summary * {{ color: #FFFFFF !important; }}
+    
+    /* expander 내부 본문 글자 — 밝은 흰색 강제 */
+    [data-testid="stExpander"] [data-testid="stExpanderDetails"],
+    [data-testid="stExpander"] [data-testid="stExpanderDetails"] *,
+    [data-testid="stExpander"] p,
+    [data-testid="stExpander"] li,
+    [data-testid="stExpander"] span,
+    [data-testid="stExpander"] div,
+    [data-testid="stExpander"] [data-testid="stCaptionContainer"],
+    [data-testid="stExpander"] [data-testid="stCaptionContainer"] * {{
+        color: #FFFFFF !important;
+        background-color: transparent !important;
+    }}
+    
+    /* expander 안의 stAlert (info 박스 안에 있는 경우) */
+    [data-testid="stExpander"] [data-testid="stAlertContainer"] *,
+    [data-testid="stExpander"] [data-baseweb="notification"] * {{
+        color: #FFFFFF !important;
+    }}
     hr {{ border-color: {BORDER} !important; }}
     .stMarkdown table {{
         background-color: {SURFACE};
@@ -512,13 +536,46 @@ df['날짜'] = pd.to_datetime(df['날짜'], errors='coerce')
 df = df.dropna(subset=['날짜', '브랜드', '제품'])
 df['브랜드'] = df['브랜드'].astype(str).str.strip()
 df['제품'] = df['제품'].astype(str).str.strip()
+
+# 매출 컬럼은 우선 숫자 변환만 (fillna 전)
+df['_매출_원본'] = pd.to_numeric(df['메타제외매출'], errors='coerce')
+
+# 미래 데이터 자동 컷오프: 어제 날짜까지만 (오늘 이후는 무조건 제외)
+from datetime import date as _date
+today_ts = pd.Timestamp(_date.today())
+yesterday_ts = today_ts - pd.Timedelta(days=1)
+
+# K열이 채워진 마지막 날짜 vs 어제 — 더 이른 쪽 선택
+last_filled = df[df['_매출_원본'].notna()]['날짜'].max() if df['_매출_원본'].notna().any() else None
+if last_filled is not None and pd.notna(last_filled):
+    cutoff = min(last_filled, yesterday_ts)
+else:
+    cutoff = yesterday_ts
+
+before_len = len(df)
+df = df[df['날짜'] <= cutoff].copy()
+cutoff_info = {
+    'cutoff': cutoff,
+    'removed': before_len - len(df),
+    'last_filled': last_filled,
+}
+
+# 이제 모든 수치 컬럼 0 채움
 for c in ['메타제외매출', '메타제외판매수량', '바이럴조회수', '숏폼조회수']:
     df[c] = pd.to_numeric(df[c], errors='coerce').fillna(0)
+df = df.drop(columns=['_매출_원본'])
 
 df_products = df[df['제품'] != '전체'].sort_values(by=['브랜드', '제품', '날짜']).copy()
 if len(df_products) == 0:
     st.error("'전체'를 제외한 제품 행이 없습니다.")
     st.stop()
+
+if cutoff_info['removed'] > 0:
+    st.info(
+        f"📅 데이터 기간 자동 조정 — 오늘 이후 미래 데이터 제외. "
+        f"분석 종료일: {cutoff_info['cutoff'].strftime('%Y-%m-%d')} (어제 기준) · "
+        f"제외 {cutoff_info['removed']:,}건"
+    )
 
 # 데이터 읽기 진단 (사용자가 컬럼 매핑 확인용)
 with st.expander("📊 데이터 읽기 진단 — 컬럼 매핑 확인", expanded=(df['메타제외매출'].sum() == 0)):
