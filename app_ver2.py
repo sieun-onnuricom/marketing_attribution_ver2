@@ -1,12 +1,19 @@
 """
-마케팅 기여도 분석 도구 (v2)
-- 일간데이터 헤더: 2행 그룹헤더 + 3행 컬럼명, 데이터 4행~
-- 컬럼 매핑(고정): Y매출=K(메타제외 매출), 판매수량=L(메타제외 판매수량),
-  바이럴조회수=T(1~3위 조회수), 숏폼조회수=AB(숏폼 상세 조회수)
-- lag 정책: 바이럴 없음(당일) / 숏폼 0~6(당일+직전6일) / 사이다 URL 도메인별
-  (cafe·kin.naver=0, blog.naver·pann.nate=1, 그 외/빈 URL=제외)
-- 사이다 조회수: 사이다 시트에서만 산출(필수 업로드), URL 도메인 lag으로 일자 귀속
-- 오가닉: 매출=브랜드별, 수량=제품별 (둘 다 청정일 평균·음수클램프·모드 자동선택)
+마케팅 기여도 분석 도구 (v3)
+- 일간데이터 헤더: 2행 그룹헤더 + 컬럼명 (header_rows=2)
+- 컬럼 위치 (검증 완료):
+    A=날짜, B=브랜드, C=제품
+    O=메타제외 매출, L=메타제외 판매수량
+    T=1~3위조회수(바이럴), X=숏폼조회수
+- 사이다: 별도 시트에서 도메인 lag으로 일자 귀속
+    E=브랜드, F=제품, G=게시일자, I=채널, K=URL, L=조회수
+- lag 정책:
+    바이럴: lag 없음 (당일)
+    숏폼: 당일 + 직전 6일 (총 7일)
+    사이다: URL 도메인별 (cafe/kin.naver=0, blog.naver/pann.nate=1, 그 외=제외)
+- 오가닉: 매출=브랜드별, 수량=제품별 (단일/요일별/시즌보정/추세/추세+요일 자동 선택)
+- 가중치 0 매체는 엑셀/화면에 0으로 표시 ('-' 사용 금지)
+- 탭 5개: 매출 분석 / 수량 분석 / 데이터 개수 / 용어 정의 / 산정 기준
 """
 
 import streamlit as st
@@ -27,7 +34,7 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# 색상 팔레트 — 푸른 계열 통일
+# 색상
 BG = "#0F1419"
 SURFACE = "#1A2332"
 SURFACE_2 = "#2A3548"
@@ -42,22 +49,19 @@ ACCENT_DEEP = "#5B8FBF"
 HIGHLIGHT_BG = "#1E3A5F"
 SUCCESS_BG = "#264870"
 
-# 내부 고정값
 MIN_DATA_DAYS = 30
 MIN_SOLO_DAYS = 20
 
-# 매체 정의 (회귀 X 변수)
 MEDIA_ORDER = ['바이럴조회수', '숏폼조회수', '사이다조회수']
+SHORTFORM_LAG_MAX = 6
 
-# lag 정책
-SHORTFORM_LAG_MAX = 6          # 숏폼: 당일 + 직전 6일 (총 7일)
 MEDIA_LAG_POLICY = {
-    '바이럴조회수': 'none',     # lag 미적용 (당일만)
-    '숏폼조회수': 'fixed6',     # lag 0~6 고정
-    '사이다조회수': 'preshift', # 사이다 시트에서 도메인 lag 적용해 일자 귀속됨 → 회귀는 당일값
+    '바이럴조회수': 'none',
+    '숏폼조회수': 'fixed6',
+    '사이다조회수': 'preshift',
 }
 
-# 사이다 URL 도메인별 lag (게시일자 + lag = 매출 영향일)
+
 def cida_domain_lag(url):
     u = str(url).lower()
     if 'cafe' in u:
@@ -68,7 +72,8 @@ def cida_domain_lag(url):
         return 1
     if 'pann.nate' in u:
         return 1
-    return None  # 그 외/빈 URL = 제외
+    return None
+
 
 # CSS
 st.markdown(f"""
@@ -87,11 +92,6 @@ st.markdown(f"""
         border-right: 1px solid {BORDER};
     }}
     section[data-testid="stSidebar"] * {{ color: {TEXT} !important; }}
-    section[data-testid="stSidebar"] h1,
-    section[data-testid="stSidebar"] h2,
-    section[data-testid="stSidebar"] h3,
-    section[data-testid="stSidebar"] h4 {{ color: {TEXT} !important; }}
-    section[data-testid="stSidebar"] strong {{ color: {TEXT} !important; }}
     section[data-testid="stSidebar"] [data-testid="stCodeBlock"],
     section[data-testid="stSidebar"] pre {{
         background-color: {BG} !important;
@@ -133,11 +133,7 @@ st.markdown(f"""
         border-radius: 8px;
         font-size: 1rem;
     }}
-    .stButton > button:hover {{
-        background-color: {TEXT};
-        border-color: {TEXT};
-        color: {BG} !important;
-    }}
+    .stButton > button:hover {{ background-color: {TEXT}; border-color: {TEXT}; color: {BG} !important; }}
     .stButton > button * {{ color: {BG} !important; }}
     .stDownloadButton > button {{
         background-color: {ACCENT};
@@ -148,11 +144,7 @@ st.markdown(f"""
         border-radius: 8px;
         font-size: 1rem;
     }}
-    .stDownloadButton > button:hover {{
-        background-color: {TEXT};
-        border-color: {TEXT};
-        color: {BG} !important;
-    }}
+    .stDownloadButton > button:hover {{ background-color: {TEXT}; border-color: {TEXT}; color: {BG} !important; }}
     .stDownloadButton > button * {{ color: {BG} !important; }}
     [data-testid="stFileUploader"] {{
         background-color: {NAVY};
@@ -172,21 +164,16 @@ st.markdown(f"""
         font-weight: 600;
     }}
     [data-testid="stFileUploader"] button * {{ color: {BG} !important; }}
-    [data-testid="stFileUploader"] button:hover {{
-        background-color: {TEXT} !important;
-        border-color: {TEXT} !important;
-    }}
+    [data-testid="stFileUploader"] button:hover {{ background-color: {TEXT} !important; border-color: {TEXT} !important; }}
     [data-testid="stFileUploaderFile"],
     [data-testid="stFileUploaderFileData"],
-    [data-testid="stFileUploaderFileName"],
-    .uploadedFile, .uploadedFileData, .uploadedFileName {{
+    [data-testid="stFileUploaderFileName"] {{
         background-color: {SURFACE_2} !important;
         color: {TEXT} !important;
     }}
     [data-testid="stFileUploaderFile"] *,
     [data-testid="stFileUploaderFileData"] *,
-    [data-testid="stFileUploaderFileName"] *,
-    .uploadedFile *, .uploadedFileData *, .uploadedFileName * {{
+    [data-testid="stFileUploaderFileName"] * {{
         color: {TEXT} !important;
         opacity: 1 !important;
     }}
@@ -198,9 +185,7 @@ st.markdown(f"""
     }}
     [data-testid="stFileUploaderDeleteBtn"] {{ background-color: transparent !important; }}
     [data-testid="stFileUploaderDeleteBtn"]:hover {{ background-color: {NAVY_LIGHT} !important; }}
-    [data-testid="stFileUploaderDropzoneInstructions"],
-    [data-testid="stFileUploaderDropzoneInstructions"] *,
-    .css-9emcfa, .css-1uixxvy {{ display: none !important; }}
+    [data-testid="stFileUploaderDropzoneInstructions"] {{ display: none !important; }}
     [data-testid="stFileUploaderDropzone"] {{
         justify-content: center !important;
         padding: 12px !important;
@@ -208,11 +193,8 @@ st.markdown(f"""
     [data-testid="stElementToolbar"],
     [data-testid="stElementToolbarButton"],
     [data-testid="stElementToolbarButtonGroup"],
-    [data-testid="stDataFrameToolbar"],
-    div[data-testid="stElementToolbar"],
-    div[data-testid="stElementToolbarButton"] {{
+    [data-testid="stDataFrameToolbar"] {{
         background-color: transparent !important;
-        background: transparent !important;
         border: none !important;
         box-shadow: none !important;
         outline: none !important;
@@ -223,7 +205,6 @@ st.markdown(f"""
     [data-testid="stDataFrameToolbar"] button {{
         background-color: {SURFACE_2} !important;
         border: none !important;
-        box-shadow: none !important;
         color: {TEXT} !important;
         width: 32px !important;
         height: 32px !important;
@@ -242,16 +223,9 @@ st.markdown(f"""
     [data-testid="stElementToolbar"] svg,
     [data-testid="stElementToolbarButton"] svg,
     [data-testid="stElementToolbarButtonGroup"] svg,
-    [data-testid="stDataFrameToolbar"] svg,
-    [data-testid="stDataFrame"] [class*="toolbar"] svg,
-    [data-testid="stDataFrame"] [class*="Toolbar"] svg {{
+    [data-testid="stDataFrameToolbar"] svg {{
         filter: brightness(0) invert(1) !important;
         opacity: 1 !important;
-    }}
-    [data-testid="stDataFrame"] [class*="toolbar"],
-    [data-testid="stDataFrame"] [class*="Toolbar"] {{
-        background-color: transparent !important;
-        border: none !important;
     }}
     .stTabs [data-baseweb="tab-list"] {{ gap: 4px; border-bottom: 1px solid {BORDER}; }}
     .stTabs [data-baseweb="tab"] {{
@@ -294,13 +268,7 @@ st.markdown(f"""
         color: {TEXT} !important;
         background-color: transparent !important;
     }}
-    div[data-testid="stAlert"] svg,
-    div[data-testid="stAlertContainer"] svg {{ fill: {ACCENT} !important; color: {ACCENT} !important; }}
-    .stNumberInput input, .stTextInput input, .stTextArea textarea {{
-        background-color: {SURFACE} !important;
-        color: {TEXT} !important;
-        border: 1px solid {BORDER} !important;
-    }}
+    div[data-testid="stAlert"] svg {{ fill: {ACCENT} !important; }}
     [data-testid="stCaptionContainer"] * {{ color: {TEXT_MUTED} !important; }}
     [data-testid="stExpander"] {{
         background-color: {SURFACE};
@@ -328,7 +296,7 @@ st.markdown(f"""
         border: 1px solid {BORDER};
         background-color: {SURFACE};
     }}
-    .stMarkdown code, .stMarkdown p code, .stMarkdown li code, .stMarkdown td code {{
+    .stMarkdown code {{
         background-color: {SURFACE_2} !important;
         color: {ACCENT} !important;
         padding: 2px 8px !important;
@@ -347,7 +315,6 @@ st.markdown(f"""
         color: {TEXT} !important;
         border: none !important;
         padding: 0 !important;
-        font-size: 0.85rem;
     }}
     .stMarkdown pre * {{ color: {TEXT} !important; }}
     [data-testid="stCodeBlock"] {{
@@ -371,7 +338,7 @@ st.markdown(f"""
     footer {{ visibility: hidden !important; }}
     header[data-testid="stHeader"] {{ background-color: {BG} !important; }}
     header[data-testid="stHeader"] * {{ color: {TEXT} !important; }}
-    header[data-testid="stHeader"] svg {{ fill: {TEXT} !important; color: {TEXT} !important; }}
+    header[data-testid="stHeader"] svg {{ fill: {TEXT} !important; }}
     [data-testid="stSidebarCollapseButton"],
     [data-testid="collapsedControl"],
     button[kind="header"] {{ background-color: {SURFACE_2} !important; color: {TEXT} !important; }}
@@ -396,12 +363,10 @@ st.markdown(f"""
 </style>
 """, unsafe_allow_html=True)
 
-# ==========================================
 # 헤더
-# ==========================================
 st.markdown(f"<div style='margin-bottom: 8px;'><span class='header-brand-tag'>온누리커뮤니케이션</span></div>", unsafe_allow_html=True)
 st.markdown("<h1 style='margin-top: 0; margin-bottom: 4px;'>마케팅 기여도 분석</h1>", unsafe_allow_html=True)
-st.markdown(f"<p style='color:{TEXT_MUTED} !important; margin-top:0;'>청정일 베이스라인 + 매체별 회귀 가중치 산출 (오가닉매출=브랜드별 / 오가닉수량=제품별)</p>", unsafe_allow_html=True)
+st.markdown(f"<p style='color:{TEXT_MUTED} !important; margin-top:0;'>청정일 베이스라인 + 매체별 회귀 가중치 산출</p>", unsafe_allow_html=True)
 
 st.markdown("""
 <div class="app-footer-sticky">
@@ -415,9 +380,7 @@ st.markdown("""
 
 st.markdown("---")
 
-# ==========================================
 # 사이드바
-# ==========================================
 st.sidebar.header("분석 정보")
 
 DEFAULT_BRAND_FEATURES = {
@@ -430,29 +393,31 @@ DEFAULT_BRAND_FEATURES = {
 st.sidebar.markdown("**매체별 lag 정책**")
 st.sidebar.caption(
     "바이럴(1~3위): lag 없음 (당일만)\n"
-    "숏폼: 당일 + 직전 6일 (총 7일)\n"
+    "숏폼: 당일 + 직전 6일\n"
     "사이다: URL 도메인별\n"
-    "  cafe / kin.naver → 당일\n"
-    "  blog.naver / pann.nate → 1일\n"
-    "  그 외 / 빈 URL → 제외"
+    "  cafe/kin.naver → 당일\n"
+    "  blog.naver/pann.nate → +1일\n"
+    "  그 외/빈 URL → 제외"
 )
-
-st.sidebar.markdown("**분석 기준값 (고정)**")
+st.sidebar.markdown("**오가닉 산출**")
+st.sidebar.caption(
+    "단일/요일별/시즌보정/추세/추세+요일 5가지를 회귀 R²로 비교해 최적 자동 선택"
+)
+st.sidebar.markdown("**기준값 (고정)**")
 st.sidebar.caption("최소 데이터 30일 / 매체 단독일 최소 20개")
 
 st.sidebar.markdown("---")
-st.sidebar.markdown("**일간데이터 헤더 구조**")
-st.sidebar.caption("2행 그룹헤더 + 3행 컬럼명, 데이터 4행~")
-st.sidebar.markdown("**사용 컬럼 (위치 고정)**")
+st.sidebar.markdown("**일간데이터 컬럼 (위치 고정)**")
 st.sidebar.code(
-    "A 날짜\nB 브랜드\nC 제품\nK 메타제외 매출\nL 메타제외 판매수량\nT 1~3위 조회수(바이럴)\nAB 숏폼 조회수",
+    "A 날짜\nB 브랜드\nC 제품\nL 메타제외 판매수량\nO 메타제외 매출\nT 1~3위 조회수(바이럴)\nX 숏폼 조회수",
     language=None
 )
-st.sidebar.markdown("**사이다 시트 (필수)**")
+st.sidebar.markdown("**사이다 시트 컬럼**")
 st.sidebar.code(
     "E 브랜드\nF 제품\nG 게시일자\nI 채널\nK URL\nL 조회수",
     language=None
 )
+
 
 # ==========================================
 # 파일 업로드
@@ -466,10 +431,10 @@ uploaded_cida = st.file_uploader(
     "사이다 시트 업로드 (필수, xlsx)",
     type=["xlsx"],
     key="cida_raw",
-    help="사이다 조회수는 이 시트의 URL 도메인별 lag으로 일자에 귀속됩니다. 빈 조회수는 (제품×채널) 평균으로 보정."
+    help="사이다 조회수는 이 시트의 URL 도메인별 lag으로 일자 귀속됩니다."
 )
 
-# 엑셀 열 문자 → 0-based 인덱스
+
 def col_letter_to_idx(letter):
     letter = letter.upper()
     idx = 0
@@ -477,29 +442,21 @@ def col_letter_to_idx(letter):
         idx = idx * 26 + (ord(ch) - ord('A') + 1)
     return idx - 1
 
-# 일간데이터: 위치 기반 매핑 (열 문자)
+
+# 컬럼 매핑 (정확한 위치)
 DAILY_COLMAP = {
     '날짜': 'A', '브랜드': 'B', '제품': 'C',
-    '메타제외매출': 'K', '판매수량': 'L',
-    '바이럴조회수': 'T', '숏폼조회수': 'AB',
+    '메타제외판매수량': 'L', '메타제외매출': 'O',
+    '바이럴조회수': 'T', '숏폼조회수': 'X',
 }
-
-# 사이다: 위치 기반 매핑 (열 문자)
 CIDA_COLMAP = {
     '브랜드': 'E', '제품': 'F', '게시일자': 'G', '채널': 'I', 'url': 'K', '조회수': 'L',
 }
 
 
-def read_by_position(file, header_rows, data_col_letters, out_names, sheet_name=None):
-    """
-    엑셀을 헤더 없이 읽어 위치(열 문자) 기반으로 필요한 컬럼만 추출.
-    header_rows: 건너뛸 헤더 행 수 (데이터 시작 전까지)
-    data_col_letters: ['A','B',...] 추출할 열 문자 리스트
-    out_names: 위 열에 부여할 컬럼명 (동일 순서)
-    """
+def read_by_position(file, header_rows, col_map, sheet_name=None):
     xl = pd.ExcelFile(file)
     all_sheets = xl.sheet_names
-    # 시트 선택: 정확일치 → 부분일치(NFC 정규화, '삭제' 포함 시트 후순위) → 첫 시트
     used = None
     if sheet_name is not None:
         if sheet_name in all_sheets:
@@ -511,18 +468,16 @@ def read_by_position(file, header_rows, data_col_letters, out_names, sheet_name=
                 sn = unicodedata.normalize('NFC', str(s)).strip()
                 if sn == tgt or tgt in sn or sn in tgt:
                     cands.append(s)
-            # '삭제'가 들어간 시트는 뒤로
             cands.sort(key=lambda s: ('삭제' in str(s), len(str(s))))
             if cands:
                 used = cands[0]
     if used is None:
         used = all_sheets[0]
-    # header=None으로 전체를 읽고 위치로 슬라이스
     raw = pd.read_excel(xl, sheet_name=used, header=None)
-    raw = raw.iloc[header_rows:].reset_index(drop=True)  # 데이터 행만
+    raw = raw.iloc[header_rows:].reset_index(drop=True)
     out = pd.DataFrame()
     max_idx = raw.shape[1] - 1
-    for letter, name in zip(data_col_letters, out_names):
+    for name, letter in col_map.items():
         ci = col_letter_to_idx(letter)
         if ci > max_idx:
             out[name] = np.nan
@@ -535,75 +490,55 @@ if uploaded_file is None:
     st.info("일간데이터 파일을 업로드하세요 (xlsx).")
     st.stop()
 if uploaded_cida is None:
-    st.info("사이다 시트는 필수입니다. 사이다 시트(xlsx)를 업로드하세요.")
+    st.info("사이다 시트는 필수입니다.")
     st.stop()
 
-# --- 일간데이터 읽기 (헤더 3행: 1행 비어있을 수 있음 + 2행 그룹 + 3행 컬럼명 → 데이터 4행~) ---
-# 일간데이터: 1행 그룹헤더 + 2행 컬럼명, 데이터 3행~ → header_rows=2
 try:
-    daily_letters = list(DAILY_COLMAP.values())
-    daily_names = list(DAILY_COLMAP.keys())
     df, used_sheet, all_sheets = read_by_position(
-        uploaded_file, header_rows=2,
-        data_col_letters=daily_letters, out_names=daily_names,
-        sheet_name='일간데이터'
+        uploaded_file, header_rows=2, col_map=DAILY_COLMAP, sheet_name='일간데이터'
     )
     if used_sheet != '일간데이터':
-        st.warning(f"'일간데이터' 시트를 찾지 못해 '{used_sheet}' 시트를 사용합니다. 전체 시트: {all_sheets}")
+        st.warning(f"'일간데이터' 시트를 찾지 못해 '{used_sheet}' 시트를 사용. 전체 시트: {all_sheets}")
 except Exception as e:
     st.error(f"일간데이터 읽기 실패: {e}")
     st.stop()
 
-# 형변환/정리
 df['날짜'] = pd.to_datetime(df['날짜'], errors='coerce')
 df = df.dropna(subset=['날짜', '브랜드', '제품'])
 df['브랜드'] = df['브랜드'].astype(str).str.strip()
 df['제품'] = df['제품'].astype(str).str.strip()
-for c in ['메타제외매출', '판매수량', '바이럴조회수', '숏폼조회수']:
+for c in ['메타제외매출', '메타제외판매수량', '바이럴조회수', '숏폼조회수']:
     df[c] = pd.to_numeric(df[c], errors='coerce').fillna(0)
 
-# '전체' 행 제외 (제품 단위 분석)
 df_products = df[df['제품'] != '전체'].sort_values(by=['브랜드', '제품', '날짜']).copy()
-
 if len(df_products) == 0:
-    st.error("'전체'를 제외한 제품 행이 없습니다. 제품 컬럼(C열) 확인 필요.")
+    st.error("'전체'를 제외한 제품 행이 없습니다.")
     st.stop()
 
-# ==========================================
-# 사이다 시트 읽기 + 도메인 lag 적용 + 보정
-# ==========================================
+# 사이다
 try:
-    cida_letters = list(CIDA_COLMAP.values())
-    cida_names = list(CIDA_COLMAP.keys())
     df_cida, used_cida_sheet, cida_all = read_by_position(
-        uploaded_cida, header_rows=2,   # 1행 안내 + 2행 헤더 → 데이터 3행~
-        data_col_letters=cida_letters, out_names=cida_names,
-        sheet_name='기획사이다_raw'
+        uploaded_cida, header_rows=2, col_map=CIDA_COLMAP, sheet_name='기획사이다_raw'
     )
 except Exception as e:
     st.error(f"사이다 시트 읽기 실패: {e}")
     st.stop()
 
-if used_cida_sheet != '기획사이다_raw':
-    st.warning(f"사이다: '기획사이다_raw' 시트를 정확히 찾지 못해 '{used_cida_sheet}' 시트를 사용합니다. 전체 시트: {cida_all}")
-
 df_cida['게시일자'] = pd.to_datetime(df_cida['게시일자'], errors='coerce')
 df_cida = df_cida.dropna(subset=['게시일자', '브랜드', '제품'])
 df_cida['브랜드'] = df_cida['브랜드'].astype(str).str.strip()
 df_cida['제품'] = df_cida['제품'].astype(str).str.strip()
-df_cida['채널'] = df_cida['채널'].astype(str).str.strip() if '채널' in df_cida.columns else '-'
+df_cida['채널'] = df_cida['채널'].astype(str).str.strip()
 df_cida['url'] = df_cida['url'].astype(str).str.strip()
 df_cida['조회수'] = pd.to_numeric(df_cida['조회수'], errors='coerce')
 
-# 도메인 lag 판정 (채널 무시, URL만)
 df_cida['_lag'] = df_cida['url'].map(cida_domain_lag)
-
 n_total_cida = len(df_cida)
 n_excluded_domain = int(df_cida['_lag'].isna().sum())
 df_cida_valid = df_cida.dropna(subset=['_lag']).copy()
 df_cida_valid['_lag'] = df_cida_valid['_lag'].astype(int)
 
-# --- 빈 조회수 (제품×채널) 평균 보정 ---
+# (제품×채널) 평균 보정
 empty_views = df_cida_valid['조회수'].isna() | (df_cida_valid['조회수'] == 0)
 valid_for_avg = df_cida_valid[~empty_views]
 combo_avg = valid_for_avg.groupby(['제품', '채널'])['조회수'].mean()
@@ -623,10 +558,8 @@ for idx in df_cida_valid[empty_views].index:
         n_skip_combo += 1
         missed_combos.append(f"{p}/{ch}")
 
-# 매출 영향일 = 게시일자 + lag
 df_cida_valid['영향일'] = df_cida_valid['게시일자'] + pd.to_timedelta(df_cida_valid['_lag'], unit='D')
 
-# 제품별 사이다 일자 조회수 (제품 청정일 판정용) + 브랜드별 (회귀 X 변수용)
 cida_by_product = df_cida_valid.groupby(['영향일', '브랜드', '제품'], as_index=False)['조회수_보정'].sum()
 cida_by_product.columns = ['날짜', '브랜드', '제품', '사이다조회수']
 cida_by_brand = df_cida_valid.groupby(['영향일', '브랜드'], as_index=False)['조회수_보정'].sum()
@@ -642,22 +575,19 @@ cida_info = {
     'lag_dist': df_cida_valid['_lag'].value_counts().to_dict(),
 }
 
-# ==========================================
-# 제품 단위 일자 테이블 구성 (바이럴/숏폼 + 사이다 병합)
-# ==========================================
+# 제품/브랜드 일자 테이블
 df_prod = df_products.groupby(['날짜', '브랜드', '제품'], as_index=False).agg({
     '메타제외매출': 'sum',
-    '판매수량': 'sum',
+    '메타제외판매수량': 'sum',
     '바이럴조회수': 'sum',
     '숏폼조회수': 'sum',
 })
 df_prod = df_prod.merge(cida_by_product, on=['날짜', '브랜드', '제품'], how='left')
 df_prod['사이다조회수'] = df_prod['사이다조회수'].fillna(0)
 
-# 브랜드 단위 일자 테이블 (오가닉매출/회귀용)
 df_brand = df_products.groupby(['날짜', '브랜드'], as_index=False).agg({
     '메타제외매출': 'sum',
-    '판매수량': 'sum',
+    '메타제외판매수량': 'sum',
     '바이럴조회수': 'sum',
     '숏폼조회수': 'sum',
 })
@@ -668,35 +598,28 @@ for tbl in (df_brand, df_prod):
     tbl['요일'] = tbl['날짜'].dt.day_name()
     tbl['청정일'] = (tbl[MEDIA_ORDER].sum(axis=1) == 0)
 
-# ==========================================
-# 상단 메트릭
-# ==========================================
+# 메트릭
 col1, col2, col3, col4 = st.columns(4)
 col1.metric("일간데이터 행수(제품)", f"{len(df_products):,}")
 col2.metric("브랜드 단위 행수", f"{len(df_brand):,}")
 col3.metric("제품 단위 행수", f"{len(df_prod):,}")
-col4.metric("사이다 유효행(도메인 매칭)", f"{len(df_cida_valid):,}")
+col4.metric("사이다 유효행", f"{len(df_cida_valid):,}")
 
 latest_date = df_brand['날짜'].max()
 earliest_date = df_brand['날짜'].min()
 st.caption(f"데이터 기간: {earliest_date.strftime('%Y-%m-%d')} ~ {latest_date.strftime('%Y-%m-%d')}")
 
-# 사이다 처리 안내
 lag_dist_str = ', '.join(f"lag{k}={v}건" for k, v in sorted(cida_info['lag_dist'].items()))
 st.info(
-    f"사이다 처리 — 전체 {cida_info['total']}건 중 도메인 매칭 {len(df_cida_valid)}건 "
-    f"(제외 {cida_info['excluded_domain']}건: 규칙 외/빈 URL) · "
-    f"결측 조회수 보정 {cida_info['corrected']}건 · "
-    f"총 조회수 {cida_info['total_views']:,}회 · [{lag_dist_str}]"
+    f"사이다 처리 — 전체 {cida_info['total']}건 / 도메인 매칭 {len(df_cida_valid)}건 / "
+    f"제외 {cida_info['excluded_domain']}건 / 결측 보정 {cida_info['corrected']}건 / "
+    f"총 조회수 {cida_info['total_views']:,}회 [{lag_dist_str}]"
 )
 if cida_info['skipped_combo'] > 0:
-    with st.expander(f"사이다 보정 못 한 행 {cida_info['skipped_combo']}건 — (제품×채널) 조합 평균 없음", expanded=False):
-        st.caption("해당 (제품, 채널) 조합으로 조회수가 한 건도 없어 평균 산출 불가. 보정 없이 0으로 둠.")
+    with st.expander(f"보정 못 한 행 {cida_info['skipped_combo']}건", expanded=False):
+        st.caption("(제품, 채널) 조합으로 조회수가 한 건도 없어 평균 산출 불가.")
         st.code('\n'.join(cida_info['missed_combos'][:30]))
-        if len(cida_info['missed_combos']) > 30:
-            st.caption(f"...외 {len(cida_info['missed_combos']) - 30}개")
 
-# 분석 실행 버튼
 btn_col, info_col = st.columns([1, 4])
 with btn_col:
     run_analysis = st.button("분석 실행", type="primary", use_container_width=True)
@@ -708,31 +631,27 @@ if not run_analysis:
 
 
 # ==========================================
-# 오가닉 베이스라인 산출 (매출 또는 수량 공용)
+# 오가닉 베이스라인 (매출/수량 공용)
 # ==========================================
 def compute_organic_baseline(group, value_col, min_trend_clean=10):
-    """
-    청정일 기준 오가닉 베이스라인.
-    반환 dict:
-      overall          : 청정일 단일 평균 (음수 클램프)
-      by_wd{0..6}      : 요일별 평균 (표본<5는 overall fallback)
-      by_wd_src{0..6}  : '요일별' 또는 '전체평균'
-      by_wd_n{0..6}    : 요일별 청정일 표본수
-      trend_pred       : group.index 정렬된 추세선 예측 Series (각 날짜 오가닉), 없으면 None
-      trend_slope/r2/n : 추세선 정보
-      n_clean, wd_cover, days_since, dist_grade, recency_grade
-    """
     weekday_names = ['월', '화', '수', '목', '금', '토', '일']
     clean = group[group['청정일']].copy()
     clean['_v'] = clean[value_col].clip(lower=0)
     n_clean = len(clean)
     out = {
-        'overall': 0.0, 'by_wd': {d: 0.0 for d in range(7)},
-        'by_wd_src': {d: '-' for d in range(7)},
+        'overall': 0.0,
+        'by_wd': {d: 0.0 for d in range(7)},
         'by_wd_n': {d: 0 for d in range(7)},
-        'trend_pred': None, 'trend_slope': 0.0, 'trend_r2': 0.0, 'trend_n': n_clean,
-        'n_clean': n_clean, 'wd_cover': 0, 'days_since': None,
-        'dist_grade': '-', 'recency_grade': '-',
+        'by_wd_src': {d: '-' for d in range(7)},
+        'trend_pred': None,
+        'trend_slope': 0.0,
+        'trend_r2': 0.0,
+        'trend_n': n_clean,
+        'n_clean': n_clean,
+        'wd_cover': 0,
+        'days_since': None,
+        'dist_grade': '-',
+        'recency_grade': '-',
     }
     if n_clean == 0:
         return out
@@ -751,22 +670,21 @@ def compute_organic_baseline(group, value_col, min_trend_clean=10):
         v = avg.get(d, np.nan)
         out['by_wd_n'][d] = int(n)
         if n >= MIN_WD and not pd.isna(v):
-            out['by_wd'][d] = round(v, 0)
+            out['by_wd'][d] = round(v, 1)
             out['by_wd_src'][d] = '요일별'
         else:
-            out['by_wd'][d] = round(overall, 0)
+            out['by_wd'][d] = round(overall, 1)
             out['by_wd_src'][d] = '전체평균'
     wc = out['wd_cover']
     out['dist_grade'] = 'HIGH' if wc == 7 else ('MEDIUM' if wc >= 5 else 'LOW')
     ds = out['days_since']
     out['recency_grade'] = 'HIGH' if ds <= 30 else ('MEDIUM' if ds <= 90 else 'LOW')
 
-    # --- 시간 추세선: 청정일 매출 ~ 경과일 선형회귀 → 각 날짜 오가닉 예측 ---
     if n_clean >= min_trend_clean:
         base_date = group['날짜'].min()
         ct = (clean['날짜'] - base_date).dt.days.values.reshape(-1, 1)
         cy = clean['_v'].values
-        if len(np.unique(ct)) >= 2:  # 서로 다른 날짜 2개 이상
+        if len(np.unique(ct)) >= 2:
             tm = LinearRegression().fit(ct, cy)
             allt = ((group['날짜'] - base_date).dt.days).values.reshape(-1, 1)
             pred = np.clip(tm.predict(allt), 0, None)
@@ -776,22 +694,16 @@ def compute_organic_baseline(group, value_col, min_trend_clean=10):
     return out
 
 
-# ==========================================
-# 회귀 헬퍼
-# ==========================================
 def build_media_features(g, features_base):
-    """매체별 lag 정책에 따라 X 변수 컬럼 생성. 반환: (확장된 df, {매체: [컬럼리스트]})"""
     gg = g.copy()
     media_cols = {}
     for f in features_base:
         cols = [f]
-        policy = MEDIA_LAG_POLICY.get(f, 'none')
-        if policy == 'fixed6':
+        if MEDIA_LAG_POLICY.get(f) == 'fixed6':
             for lag in range(1, SHORTFORM_LAG_MAX + 1):
                 c = f'{f}_lag{lag}'
                 gg[c] = gg[f].shift(lag)
                 cols.append(c)
-        # 'none', 'preshift' → 당일만
         media_cols[f] = cols
     return gg, media_cols
 
@@ -806,29 +718,32 @@ def fit_r2(g, y_col, x_cols):
 
 
 # ==========================================
-# 브랜드 분석 (오가닉매출 + 회귀 가중치)
+# 브랜드 분석 (매출)
 # ==========================================
-def analyze_brand(group, features_base, brand_label, organic_qty_lookup):
+def analyze_brand(group, features_base, brand_label):
     group = group.copy().sort_values('날짜').reset_index(drop=True)
     weekday_names = ['월', '화', '수', '목', '금', '토', '일']
 
     result = {
         '브랜드': brand_label,
         '청정일수': 0, '청정일_요일커버': 0, '오가닉_분포등급': '-',
-        '최근청정일_경과(일)': '-', '오가닉_최신성등급': '-',
-        '오가닉매출': 0,
+        '최근청정일_경과(일)': None, '오가닉_최신성등급': '-',
+        '오가닉매출': 0, '오가닉매출_최근': 0,
         '오가닉매출_월': 0, '오가닉매출_화': 0, '오가닉매출_수': 0, '오가닉매출_목': 0,
         '오가닉매출_금': 0, '오가닉매출_토': 0, '오가닉매출_일': 0,
+        '청정일_월': 0, '청정일_화': 0, '청정일_수': 0, '청정일_목': 0,
+        '청정일_금': 0, '청정일_토': 0, '청정일_일': 0,
         '오가닉모드': '-',
-        '추세_기울기(월)': '-', '추세_R²': '-', '오가닉매출_최근': '-',
-        '기저매출_7일vs30일(%)': '-',
+        '추세_기울기(월)': 0, '추세_R²': 0,
+        '기저매출_7일vs30일(%)': 0,
         '시즌보정': '-', '요일패턴_최대': '-', '월패턴_최대': '-',
-        '회귀샘플수': 0, '전체R²': '-',
+        '회귀샘플수': 0, '전체R²': 0,
     }
+    # 매체 컬럼 기본값 0
     for m in MEDIA_ORDER:
-        result[f'{m}_가중치'] = '-'
-        result[f'{m}_최적lag'] = '-'
-        result[f'{m}_단독R²'] = '-'
+        result[f'{m}_가중치'] = 0
+        result[f'{m}_최적lag'] = 0
+        result[f'{m}_단독R²'] = 0
         result[f'{m}_단독일수'] = 0
     result['분석상태'] = '대기'
 
@@ -839,14 +754,13 @@ def analyze_brand(group, features_base, brand_label, organic_qty_lookup):
         result['분석상태'] = '매출 0'
         return result
 
-    # 오가닉매출 (브랜드)
     base = compute_organic_baseline(group, '메타제외매출')
     if base['n_clean'] == 0:
         result['분석상태'] = '청정일 없음'
         return result
+
     organic_avg = base['overall']
     organic_by_wd = base['by_wd']
-
     result.update({
         '청정일수': base['n_clean'],
         '오가닉매출': round(organic_avg, 0),
@@ -855,13 +769,15 @@ def analyze_brand(group, features_base, brand_label, organic_qty_lookup):
         '최근청정일_경과(일)': base['days_since'],
         '오가닉_최신성등급': base['recency_grade'],
     })
-    # 추세가 있으면 최신 시점 예측 오가닉을 별도 표기 (단일 평균은 추세 미반영)
     if base['trend_pred'] is not None:
         result['오가닉매출_최근'] = round(float(base['trend_pred'].iloc[-1]), 0)
+    else:
+        result['오가닉매출_최근'] = round(organic_avg, 0)
     for d in range(7):
         result[f'오가닉매출_{weekday_names[d]}'] = organic_by_wd[d]
+        result[f'청정일_{weekday_names[d]}'] = base['by_wd_n'][d]
 
-    # 기저매출 변동률
+    # 기저매출 변동
     group['매출_음수제거'] = group['메타제외매출'].clip(lower=0)
     group['평균_7일'] = group['매출_음수제거'].rolling(7, min_periods=3).mean().shift(1)
     group['평균_30일'] = group['매출_음수제거'].rolling(30, min_periods=10).mean().shift(1)
@@ -872,18 +788,16 @@ def analyze_brand(group, features_base, brand_label, organic_qty_lookup):
         dev = 0
     result['기저매출_7일vs30일(%)'] = round(dev, 1)
 
-    # Y 후보: 단일 / 요일별 / 시즌보정 / 추세 / 추세+요일
+    # Y 후보
     group['요일num'] = group['날짜'].dt.dayofweek
     group['월'] = group['날짜'].dt.month
     group['Y_raw'] = group['메타제외매출'] - organic_avg
     group['Y_wd'] = group['메타제외매출'] - group['요일num'].map(organic_by_wd).fillna(organic_avg)
 
-    # 시간 추세선 오가닉 (compute_organic_baseline에서 산출된 예측)
     has_trend = base['trend_pred'] is not None
     if has_trend:
         trend_pred = base['trend_pred'].reindex(group.index)
         group['Y_trend'] = group['메타제외매출'] - trend_pred.values
-        # 추세 + 요일 잔차 보정: 청정일에서 (실측-추세)의 요일별 평균을 추세에 더함
         clean_t = group[group['청정일']].copy()
         clean_t['_resid'] = clean_t['메타제외매출'].clip(lower=0) - trend_pred.reindex(clean_t.index).values
         clean_t['요일num'] = clean_t['날짜'].dt.dayofweek
@@ -930,7 +844,6 @@ def analyze_brand(group, features_base, brand_label, organic_qty_lookup):
             season_info['weekday_coef'] = wd_coef
             season_info['month_coef'] = mo_coef
 
-    # 전체회귀 사전 R² (모든 매체 + lag)
     def quick_r2(y_col):
         gg, mc = build_media_features(group, features_base)
         all_x = [c for cols in mc.values() for c in cols]
@@ -952,30 +865,23 @@ def analyze_brand(group, features_base, brand_label, organic_qty_lookup):
     group['Y'] = group[best_y]
     result['오가닉모드'] = f"{best_mode} (R²={best_r2:.3f})"
 
-    # 추세 정보 표기
     if has_trend:
-        slope_per_month = base['trend_slope'] * 30
-        result['추세_기울기(월)'] = round(slope_per_month, 0)
+        result['추세_기울기(월)'] = round(base['trend_slope'] * 30, 0)
         result['추세_R²'] = round(base['trend_r2'], 3)
-    else:
-        result['추세_기울기(월)'] = '-'
-        result['추세_R²'] = '-'
 
     if apply_season:
         wmax = max(season_info['weekday_coef'], key=season_info['weekday_coef'].get)
         mmax = max(season_info['month_coef'], key=season_info['month_coef'].get)
         tag = '적용' if best_mode == '시즌보정' else '미채택'
-        result['시즌보정'] = f"{tag} (단일 {r2_단일:.3f} / 요일별 {r2_요일별:.3f} / 시즌 {r2_시즌:.3f})"
+        result['시즌보정'] = f"{tag} (단일 {r2_단일:.3f}/요일별 {r2_요일별:.3f}/시즌 {r2_시즌:.3f})"
         result['요일패턴_최대'] = f"{weekday_names[wmax]} ({season_info['weekday_coef'][wmax]:.2f})"
         result['월패턴_최대'] = f"{mmax}월 ({season_info['month_coef'][mmax]:.2f})"
     else:
-        result['시즌보정'] = f"미적용 (청정일 {base['n_clean']}개 < 14)" if base['n_clean'] < 14 else '미적용 (오가닉 0)'
+        result['시즌보정'] = f"미적용 (청정일 {base['n_clean']}개<14)" if base['n_clean'] < 14 else '미적용'
 
-    # 매체별 가중치
+    # 매체별 가중치 (최적lag 표기)
     gg, media_cols = build_media_features(group, features_base)
     for f in features_base:
-        cols = media_cols[f]
-        # 최적lag 표기
         if MEDIA_LAG_POLICY.get(f) == 'none':
             result[f'{f}_최적lag'] = 0
         elif MEDIA_LAG_POLICY.get(f) == 'fixed6':
@@ -983,7 +889,6 @@ def analyze_brand(group, features_base, brand_label, organic_qty_lookup):
         else:
             result[f'{f}_최적lag'] = '도메인'
 
-    # 전체 다중회귀
     all_x = [c for cols in media_cols.values() for c in cols]
     reg = gg[['Y'] + all_x].dropna()
     if len(reg) < MIN_SOLO_DAYS:
@@ -997,7 +902,6 @@ def analyze_brand(group, features_base, brand_label, organic_qty_lookup):
     result['전체R²'] = round(model.score(reg[all_x], reg['Y']), 3)
     result['회귀샘플수'] = len(reg)
 
-    # 가중치 = 당일 + lag 계수 합 (음수 0)
     for f in features_base:
         total = sum(coefs.get(c, 0) for c in media_cols[f])
         result[f'{f}_가중치'] = max(0, round(total, 2))
@@ -1011,7 +915,7 @@ def analyze_brand(group, features_base, brand_label, organic_qty_lookup):
         solo = reg[mask]
         result[f'{f}_단독일수'] = len(solo)
         if len(solo) < MIN_SOLO_DAYS:
-            result[f'{f}_단독R²'] = '단독일 부족'
+            result[f'{f}_단독R²'] = 0
             continue
         sc = media_cols[f]
         ms = LinearRegression(fit_intercept=True)
@@ -1029,32 +933,34 @@ def analyze_product_qty(group, brand_label, product_label):
     weekday_names = ['월', '화', '수', '목', '금', '토', '일']
     res = {
         '브랜드': brand_label, '제품': product_label,
-        '청정일수': 0, '오가닉수량': 0, '오가닉수량_최근': '-',
+        '청정일수': 0,
+        '오가닉수량': 0, '오가닉수량_최근': 0,
         '오가닉수량_월': 0, '오가닉수량_화': 0, '오가닉수량_수': 0, '오가닉수량_목': 0,
         '오가닉수량_금': 0, '오가닉수량_토': 0, '오가닉수량_일': 0,
         '청정일_월': 0, '청정일_화': 0, '청정일_수': 0, '청정일_목': 0,
         '청정일_금': 0, '청정일_토': 0, '청정일_일': 0,
-        '추세_기울기(월)': '-',
-        '오가닉_분포등급': '-', '최근청정일_경과(일)': '-', '오가닉_최신성등급': '-',
+        '추세_기울기(월)': 0,
+        '오가닉_분포등급': '-', '최근청정일_경과(일)': None, '오가닉_최신성등급': '-',
         '상태': '대기',
     }
     if len(group) < MIN_DATA_DAYS:
         res['상태'] = f'데이터부족({len(group)}일)'
-        # 부족해도 청정일 평균은 참고로 산출
-    base = compute_organic_baseline(group, '판매수량')
+    base = compute_organic_baseline(group, '메타제외판매수량')
     if base['n_clean'] == 0:
         res['상태'] = '청정일 없음'
         return res
     res.update({
         '청정일수': base['n_clean'],
-        '오가닉수량': round(base['overall'], 1),
+        '오가닉수량': round(base['overall'], 2),
         '오가닉_분포등급': base['dist_grade'],
         '최근청정일_경과(일)': base['days_since'],
         '오가닉_최신성등급': base['recency_grade'],
     })
     if base['trend_pred'] is not None:
-        res['오가닉수량_최근'] = round(float(base['trend_pred'].iloc[-1]), 1)
+        res['오가닉수량_최근'] = round(float(base['trend_pred'].iloc[-1]), 2)
         res['추세_기울기(월)'] = round(base['trend_slope'] * 30, 2)
+    else:
+        res['오가닉수량_최근'] = round(base['overall'], 2)
     for d in range(7):
         res[f'오가닉수량_{weekday_names[d]}'] = base['by_wd'][d]
         res[f'청정일_{weekday_names[d]}'] = base['by_wd_n'][d]
@@ -1064,7 +970,7 @@ def analyze_product_qty(group, brand_label, product_label):
 
 
 # ==========================================
-# 실행: 브랜드 분석
+# 실행
 # ==========================================
 results = []
 progress = st.progress(0)
@@ -1073,11 +979,10 @@ status = st.empty()
 all_brands = list(df_brand.groupby('브랜드'))
 for idx, (brand, group) in enumerate(all_brands):
     progress.progress((idx + 1) / max(1, len(all_brands)))
-    status.text(f"브랜드 분석 중: {brand}")
+    status.text(f"브랜드 분석: {brand}")
     if brand not in DEFAULT_BRAND_FEATURES:
         continue
-    results.append(analyze_brand(group, DEFAULT_BRAND_FEATURES[brand], brand, None))
-
+    results.append(analyze_brand(group, DEFAULT_BRAND_FEATURES[brand], brand))
 progress.empty()
 status.empty()
 
@@ -1087,7 +992,6 @@ if len(results) == 0:
 
 result_df = pd.DataFrame(results)
 
-# 제품별 오가닉수량
 qty_results = []
 for (brand, product), g in df_prod.groupby(['브랜드', '제품']):
     if brand not in DEFAULT_BRAND_FEATURES:
@@ -1095,24 +999,10 @@ for (brand, product), g in df_prod.groupby(['브랜드', '제품']):
     qty_results.append(analyze_product_qty(g.sort_values('날짜').reset_index(drop=True), brand, product))
 qty_df = pd.DataFrame(qty_results) if qty_results else pd.DataFrame()
 
-# 컬럼 순서
-ordered = [
-    '브랜드', '청정일수', '청정일_요일커버', '오가닉_분포등급',
-    '최근청정일_경과(일)', '오가닉_최신성등급',
-    '오가닉매출', '오가닉매출_최근',
-    '오가닉매출_월', '오가닉매출_화', '오가닉매출_수', '오가닉매출_목',
-    '오가닉매출_금', '오가닉매출_토', '오가닉매출_일',
-    '오가닉모드', '추세_기울기(월)', '추세_R²', '기저매출_7일vs30일(%)',
-    '시즌보정', '요일패턴_최대', '월패턴_최대', '회귀샘플수', '전체R²',
-]
-for m in MEDIA_ORDER:
-    ordered += [f'{m}_가중치', f'{m}_최적lag', f'{m}_단독R²', f'{m}_단독일수']
-ordered.append('분석상태')
-ordered = [c for c in ordered if c in result_df.columns]
-result_df = result_df[ordered]
-
 success_n = int((result_df['분석상태'] == '분석성공').sum())
-result_placeholder.success(f"분석 완료 — 브랜드 {len(result_df)}개 / 성공 {success_n}개 · 제품 오가닉수량 {len(qty_df)}개")
+result_placeholder.success(
+    f"분석 완료 — 브랜드 {len(result_df)}개 / 성공 {success_n}개 · 제품 오가닉수량 {len(qty_df)}개"
+)
 
 
 # ==========================================
@@ -1121,8 +1011,9 @@ result_placeholder.success(f"분석 완료 — 브랜드 {len(result_df)}개 / �
 def color_grade(val):
     return f'background-color: {HIGHLIGHT_BG}; color: {TEXT}; font-weight: 600' if val == 'HIGH' else ''
 
+
 def color_r2(val):
-    if val in ('-', '단독일 부족', None) or (isinstance(val, float) and pd.isna(val)):
+    if val in ('-', None) or (isinstance(val, float) and pd.isna(val)):
         return ''
     try:
         v = float(val)
@@ -1130,71 +1021,119 @@ def color_r2(val):
         return ''
     return f'background-color: {HIGHLIGHT_BG}; color: {TEXT}; font-weight: 600' if v >= 0.5 else ''
 
+
 def color_status(val):
     return f'background-color: {HIGHLIGHT_BG}; color: {TEXT}; font-weight: 600' if val in ('분석성공', '산출완료') else ''
 
 
 # ==========================================
-# 결과 탭
+# 탭 5개
 # ==========================================
 tab1, tab2, tab3, tab4, tab5 = st.tabs(
-    ["가중치 요약", "전체 결과", "제품 오가닉수량", "용어 정의", "산정 기준"]
+    ["매출 분석", "수량 분석", "데이터 개수", "용어 정의", "산정 기준"]
 )
 
+# ---- 매출 분석 ----
 with tab1:
-    st.subheader("매체별 가중치 (브랜드 단위)")
-    st.caption("시트에 적용할 핵심 가중치입니다. 단독R²로 신뢰도 확인 후 사용하세요.")
-    cols = ['브랜드', '오가닉매출', '전체R²']
+    st.subheader("브랜드별 매출 분석")
+    st.caption(
+        "각 브랜드의 오가닉매출(요일별, 추세 반영), 매체별 가중치, 신뢰도(R²). "
+        "오가닉모드 컬럼: 단일/요일별/시즌보정/추세/추세+요일 중 R² 가장 높은 것 자동 채택."
+    )
+
+    sales_cols = [
+        '브랜드',
+        '오가닉매출', '오가닉매출_최근',
+        '오가닉매출_월', '오가닉매출_화', '오가닉매출_수', '오가닉매출_목',
+        '오가닉매출_금', '오가닉매출_토', '오가닉매출_일',
+        '오가닉모드', '추세_기울기(월)', '추세_R²',
+        '전체R²',
+    ]
     for m in MEDIA_ORDER:
-        cols += [f'{m}_가중치', f'{m}_최적lag', f'{m}_단독R²']
-    cols.append('분석상태')
-    cols = [c for c in cols if c in result_df.columns]
-    s = result_df[cols].style
-    s = s.map(color_r2, subset=[c for c in cols if 'R²' in c])
+        sales_cols += [f'{m}_가중치', f'{m}_최적lag', f'{m}_단독R²']
+    sales_cols.append('분석상태')
+    sales_cols = [c for c in sales_cols if c in result_df.columns]
+
+    s = result_df[sales_cols].style
+    s = s.map(color_r2, subset=[c for c in sales_cols if 'R²' in c])
     s = s.map(color_status, subset=['분석상태'])
     st.dataframe(s, use_container_width=True, height=400)
 
+# ---- 수량 분석 ----
 with tab2:
-    st.subheader("전체 분석 결과 (브랜드)")
-    s = result_df.style
-    s = s.map(color_grade, subset=['오가닉_분포등급', '오가닉_최신성등급'])
-    r2cols = [c for c in result_df.columns if 'R²' in c]
-    if r2cols:
-        s = s.map(color_r2, subset=r2cols)
-    s = s.map(color_status, subset=['분석상태'])
-    st.dataframe(s, use_container_width=True, height=600)
-
-with tab3:
-    st.subheader("제품별 오가닉수량")
-    st.caption("청정일(바이럴·숏폼·사이다 조회수 모두 0) 기준 제품별 판매수량 평균. 음수는 0 클램프.")
+    st.subheader("제품별 수량 분석")
+    st.caption(
+        "각 제품의 오가닉수량(메타제외 판매수량 기준 청정일 평균, 요일별, 추세 반영). "
+        "마케팅 영향 없는 기본 판매량을 의미합니다."
+    )
     if len(qty_df) > 0:
-        qcols = [
-            '브랜드', '제품', '청정일수', '오가닉수량', '오가닉수량_최근', '추세_기울기(월)',
+        qty_cols = [
+            '브랜드', '제품', '오가닉수량', '오가닉수량_최근',
             '오가닉수량_월', '오가닉수량_화', '오가닉수량_수', '오가닉수량_목',
             '오가닉수량_금', '오가닉수량_토', '오가닉수량_일',
-            '청정일_월', '청정일_화', '청정일_수', '청정일_목',
-            '청정일_금', '청정일_토', '청정일_일',
-            '오가닉_분포등급', '최근청정일_경과(일)', '오가닉_최신성등급', '상태',
+            '추세_기울기(월)', '오가닉_분포등급', '오가닉_최신성등급', '상태',
         ]
-        qcols = [c for c in qcols if c in qty_df.columns]
-        sq = qty_df[qcols].style
-        sq = sq.map(color_grade, subset=[c for c in ['오가닉_분포등급', '오가닉_최신성등급'] if c in qcols])
+        qty_cols = [c for c in qty_cols if c in qty_df.columns]
+        sq = qty_df[qty_cols].style
+        sq = sq.map(color_grade, subset=[c for c in ['오가닉_분포등급', '오가닉_최신성등급'] if c in qty_cols])
         sq = sq.map(color_status, subset=['상태'])
         st.dataframe(sq, use_container_width=True, height=600)
     else:
-        st.warning("제품 오가닉수량 결과 없음.")
+        st.warning("수량 분석 결과 없음.")
 
+# ---- 데이터 개수 ----
+with tab3:
+    st.subheader("데이터 개수 / 최신성")
+    st.caption(
+        "각 분석의 신뢰도 판단용. 청정일이 요일별로 충분히 분포되어 있는지, "
+        "최근 청정일이 얼마나 가까운지 확인."
+    )
+
+    st.markdown("#### 매출 분석 — 브랜드별 청정일 데이터")
+    cnt_cols = [
+        '브랜드', '청정일수', '청정일_요일커버',
+        '청정일_월', '청정일_화', '청정일_수', '청정일_목',
+        '청정일_금', '청정일_토', '청정일_일',
+        '오가닉_분포등급', '최근청정일_경과(일)', '오가닉_최신성등급',
+        '회귀샘플수',
+    ]
+    cnt_cols = [c for c in cnt_cols if c in result_df.columns]
+    sc = result_df[cnt_cols].style
+    sc = sc.map(color_grade, subset=[c for c in ['오가닉_분포등급', '오가닉_최신성등급'] if c in cnt_cols])
+    st.dataframe(sc, use_container_width=True, height=300)
+
+    st.markdown("#### 수량 분석 — 제품별 청정일 데이터")
+    if len(qty_df) > 0:
+        qcnt_cols = [
+            '브랜드', '제품', '청정일수',
+            '청정일_월', '청정일_화', '청정일_수', '청정일_목',
+            '청정일_금', '청정일_토', '청정일_일',
+            '오가닉_분포등급', '최근청정일_경과(일)', '오가닉_최신성등급',
+        ]
+        qcnt_cols = [c for c in qcnt_cols if c in qty_df.columns]
+        sqc = qty_df[qcnt_cols].style
+        sqc = sqc.map(color_grade, subset=[c for c in ['오가닉_분포등급', '오가닉_최신성등급'] if c in qcnt_cols])
+        st.dataframe(sqc, use_container_width=True, height=500)
+    else:
+        st.warning("수량 분석 데이터 없음.")
+
+# ---- 용어 정의 ----
 with tab4:
     st.subheader("용어 정의")
     glossary_df = pd.DataFrame([
-        ['오가닉매출', '광고/마케팅 없이 발생하는 매출 (브랜드별)', '청정일 매출 평균'],
-        ['오가닉수량', '광고/마케팅 없이 발생하는 판매수량 (제품별)', '청정일 판매수량 평균'],
+        ['오가닉매출', '광고/마케팅 없이 발생하는 매출 (브랜드별)', '청정일 메타제외매출 평균'],
+        ['오가닉수량', '광고/마케팅 없이 발생하는 판매수량 (제품별)', '청정일 메타제외판매수량 평균'],
         ['청정일', '바이럴·숏폼·사이다 조회수가 모두 0인 날', '오가닉 추정 기준'],
         ['마케팅기여매출', '당일매출 - 오가닉매출', '양수만 측정'],
         ['콘텐츠기여매출', '마케팅기여매출 × 채널비중 × 채널내 콘텐츠조회수비중', ''],
         ['마케팅추정ROAS', '콘텐츠기여매출 / 비용', ''],
+        ['전체R²', '모든 매체 동시 학습 회귀 설명력', '0.5↑ 신뢰 가능'],
+        ['단독R²', '해당 매체만 단독 진행된 날 회귀 설명력', f'단독일 {MIN_SOLO_DAYS}개↑'],
+        ['오가닉매출_최근', '추세선이 예측한 최신 시점 오가닉매출', '시간 흐름 반영'],
+        ['추세_기울기(월)', '오가닉이 한 달에 변하는 양', '+ 성장, − 감소'],
     ], columns=['용어', '정의', '비고'])
-    st.dataframe(glossary_df, use_container_width=True, hide_index=True, height=280)
+    st.dataframe(glossary_df, use_container_width=True, hide_index=True, height=400)
+
     st.markdown("### 등급 기준")
     st.markdown("""
 | 등급 항목 | HIGH | MEDIUM | LOW |
@@ -1204,77 +1143,95 @@ with tab4:
 | R² (회귀 설명력) | 0.5 이상 | 0.3 ~ 0.5 | 0.3 미만 |
 """)
 
+# ---- 산정 기준 ----
 with tab5:
     st.subheader("산정 기준")
     st.markdown(f"""
 #### 1. 분석 단위
-- **오가닉매출 · 회귀 가중치**: 브랜드별 (같은 브랜드 전 제품 일자 합산)
-- **오가닉수량**: 제품별 (제품 단위 청정일 평균)
+- **매출 분석 (오가닉매출 + 회귀 가중치)**: 브랜드별 (같은 브랜드 모든 제품 일자 합산)
+- **수량 분석 (오가닉수량)**: 제품별 (제품 단위 청정일 평균)
+- 모든 산출은 **메타광고를 제외한** 매출/수량 기준 (메타제외매출, 메타제외판매수량)
 
-#### 2. 컬럼 매핑 (위치 고정)
-일간데이터는 2행 그룹헤더 + 3행 컬럼명 구조라 컬럼명이 중복됩니다. 따라서 **엑셀 열 위치**로 직접 매핑합니다.
+#### 2. 컬럼 위치 매핑 (고정)
+일간데이터는 2행 그룹헤더 구조 → 컬럼명만으로는 식별 어려움 → 엑셀 열 위치로 직접 매핑.
 
-| 항목 | 열 | 비고 |
+| 항목 | 열 | 그룹 + 컬럼명 |
 |---|---|---|
-| 날짜 | A | |
-| 브랜드 | B | |
-| 제품 | C | '전체' 행 제외 |
-| Y매출 | K | 메타제외 매출 |
-| 판매수량 | L | 메타제외 판매수량 (오가닉수량용) |
-| 바이럴조회수 | T | 1~3위 조회수 |
-| 숏폼조회수 | AB | 숏폼 상세 조회수 |
+| 날짜 | A | 날짜 |
+| 브랜드 | B | 구분/브랜드 |
+| 제품 | C | 구분/제품 |
+| 메타제외 판매수량 | L | 메타제외/판매수량 |
+| 메타제외 매출 | O | 메타제외/매출 |
+| 바이럴 조회수 | T | 바이럴 상세/1~3위 조회수 |
+| 숏폼 조회수 | X | 숏폼 상세/조회수 |
 
-사이다 조회수는 일간데이터에서 쓰지 않고 **사이다 시트에서만** 산출합니다.
+사이다 조회수는 일간데이터에서 안 쓰고 사이다 시트에서 산출.
 
-#### 3. 사이다 시트 (필수)
+#### 3. 사이다 시트
 | 항목 | 열 |
 |---|---|
 | 브랜드 | E |
 | 제품 | F |
 | 게시일자 | G |
+| 채널 | I |
 | URL | K |
 | 조회수 | L |
 
-데이터는 3행부터(1행 안내 + 2행 헤더).
-
 #### 4. 매체별 lag 정책
-| 매체 | lag | 회귀 반영 방식 |
+| 매체 | lag | 회귀 반영 |
 |---|---|---|
-| 바이럴(1~3위) | 없음 (당일) | 당일값만 X 변수 |
+| 바이럴 | 없음 (당일) | 당일값만 X 변수 |
 | 숏폼 | 당일 + 직전 6일 (총 7일) | 당일 + lag1~6 X 변수 |
 | 사이다 | **URL 도메인별** | 게시일자+lag로 일자 귀속 후 당일값 |
 
-**사이다 도메인 규칙** (채널 컬럼 무시, URL만):
+**사이다 도메인 규칙**:
 - `cafe` 포함 → 0 (당일)
-- `kin.naver` 포함 → 0 (당일)
-- `blog.naver` 포함 → 1 (다음날)
-- `pann.nate` 포함 → 1 (다음날)
-- **그 외 / 빈 URL → 제외** (전환 없음 취급, 집계 미포함)
+- `kin.naver` 포함 → 0
+- `blog.naver` 포함 → 1
+- `pann.nate` 포함 → 1
+- 그 외 / 빈 URL → **제외**
 
-예: 1/1 발행 blog.naver 콘텐츠 조회수 200 → 1/2 사이다조회수에 +200.
+#### 5. 사이다 결측 보정
+- URL 매칭된 행 중 조회수 비었거나 0이면 → (제품×채널) 평균으로 추정
+- (제품×채널) 조합 없으면 보정 없이 0
 
-#### 5. 사이다 결측 조회수 보정
-- URL 도메인 매칭된 행 중 조회수가 비었거나 0인 행 식별
-- 같은 **(제품 × 채널)** 조합의 조회수 있는 행 평균으로 추정 보정
-- 보정된 행도 그 행의 **URL 도메인 lag**을 그대로 따름
-- (제품×채널) 조합 평균이 없으면 보정 없이 0 (상단/expander 안내)
+#### 6. 오가닉 산출 — 5가지 모드 자동 비교
 
-#### 6. 오가닉 산정 (매출·수량 공통)
-- 청정일 = 바이럴·숏폼·사이다 조회수 **모두 0**인 날
-- 음수(환불 등)는 0으로 클램프 후 평균
-- 요일 표본 5건 이상이면 요일별 평균, 미만이면 전체 평균 fallback
-- **오가닉매출**은 추가로 단일 / 요일별 / 시즌보정 3가지를 회귀 R²로 비교해 자동 채택
+**5가지 베이스라인** 각각에 대해 매출 회귀를 돌려 **R² 가장 높은 모드를 자동 채택**.
 
-#### 7. 회귀 + 가중치
-- Y = (조정)매출 - 오가닉매출
+| 모드 | Y 공식 | 특징 |
+|---|---|---|
+| 단일 | `매출 - 청정일 평균` | 가장 단순 |
+| 요일별 | `매출 - 그날 요일별 평균` | 요일 효과 반영 |
+| 시즌보정 | `(매출 ÷ 요일계수×월계수) - 오가닉` | 비례 정규화 |
+| **추세** | `매출 - (청정일 시간추세 예측값)` | **시간 흐름 반영** |
+| **추세+요일** | `매출 - (추세 + 요일잔차)` | 추세 + 요일 |
+
+**추세 반영 방식**:
+1. 청정일 데이터로 `매출 ~ 경과일` 선형회귀 학습
+2. 각 날짜의 추세선 예측값 = 그날의 오가닉
+3. 이렇게 하면 시간이 지남에 따라 오가닉이 자연 성장/감소하는 효과 반영
+4. `오가닉매출_최근` 컬럼 = 최신 시점의 추세 예측 오가닉 (참고용)
+
+**적용 조건**:
+- 요일별: 요일 표본 5건 이상
+- 시즌보정: 청정일 14개 이상
+- 추세: 청정일 10개 이상
+- 미달 시 해당 모드는 후보에서 제외
+
+#### 7. 회귀 + 가중치 산출
+- Y = (선택된 오가닉 모드의 매출 잔차)
 - X = 매체별 당일 (+숏폼 lag1~6) 조회수
 - 가중치 = 해당 매체 당일+lag 계수 합 (음수면 0)
-- 전체R²(모든 매체 동시) / 매체별 단독R²(그 매체만 단독 진행된 날, {MIN_SOLO_DAYS}개 이상)
+- 전체R² = 모든 매체 동시 다중회귀 설명력
+- 매체별 단독R² = 그 매체만 진행된 날 데이터로 측정 (단독일 {MIN_SOLO_DAYS}개 이상)
 
-#### 8. 실무 적용
+#### 8. 결과 해석 가이드
 - R² ≥ 0.5: 가중치 신뢰 가능 → 시트 적용
 - R² 0.3~0.5: 참고 + 정성 판단
 - R² < 0.3: 단순 조회수 비율 대체 권장
+
+가중치 0: 해당 매체가 매출과 유의한 관계 없음 (또는 음의 관계) → 시트에서 그대로 0으로 사용 (다른 매체 점수만으로 비중 산출).
 """)
 
 # ==========================================
@@ -1282,12 +1239,12 @@ with tab5:
 # ==========================================
 buffer = BytesIO()
 with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
-    result_df.to_excel(writer, sheet_name='가중치_마스터', index=False)
+    result_df.to_excel(writer, sheet_name='매출분석_브랜드별', index=False)
     if len(qty_df) > 0:
-        qty_df.to_excel(writer, sheet_name='오가닉수량_제품별', index=False)
+        qty_df.to_excel(writer, sheet_name='수량분석_제품별', index=False)
     pd.DataFrame([
-        ['오가닉매출', '광고/마케팅 없이 발생하는 매출 (브랜드별)', '청정일 매출 평균'],
-        ['오가닉수량', '광고/마케팅 없이 발생하는 판매수량 (제품별)', '청정일 판매수량 평균'],
+        ['오가닉매출', '광고/마케팅 없이 발생하는 매출 (브랜드별)', '청정일 메타제외매출 평균'],
+        ['오가닉수량', '광고/마케팅 없이 발생하는 판매수량 (제품별)', '청정일 메타제외판매수량 평균'],
         ['청정일', '바이럴·숏폼·사이다 조회수가 모두 0인 날', ''],
         ['마케팅기여매출', '당일매출 - 오가닉매출', '양수만 측정'],
     ], columns=['용어', '정의', '비고']).to_excel(writer, sheet_name='용어집', index=False)
@@ -1295,7 +1252,7 @@ with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
 st.download_button(
     label="결과 엑셀 다운로드 (.xlsx)",
     data=buffer.getvalue(),
-    file_name="가중치_마스터.xlsx",
+    file_name="마케팅기여도분석_결과.xlsx",
     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
 )
 st.markdown("---")
