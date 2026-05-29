@@ -1333,22 +1333,115 @@ with tab5:
 # ==========================================
 # 엑셀 다운로드
 # ==========================================
+# 시트 1: 핵심 요약 (브랜드별 오가닉매출)
+sales_summary_cols = [
+    '브랜드',
+    '오가닉매출', '오가닉매출_최근',
+    '오가닉매출_월', '오가닉매출_화', '오가닉매출_수', '오가닉매출_목',
+    '오가닉매출_금', '오가닉매출_토', '오가닉매출_일',
+    '오가닉모드', '추세_기울기(월)',
+    '청정일수', '오가닉_분포등급', '오가닉_최신성등급',
+    '전체R²',
+]
+for m in MEDIA_ORDER:
+    sales_summary_cols += [f'{m}_가중치', f'{m}_단독R²']
+sales_summary_cols.append('분석상태')
+sales_summary_cols = [c for c in sales_summary_cols if c in result_df.columns]
+sales_summary_df = result_df[sales_summary_cols].copy()
+
+# 시트 2: 핵심 요약 (제품별 오가닉수량)
+qty_summary_df = pd.DataFrame()
+if len(qty_df) > 0:
+    qty_summary_cols = [
+        '브랜드', '제품',
+        '오가닉수량', '오가닉수량_최근',
+        '오가닉수량_월', '오가닉수량_화', '오가닉수량_수', '오가닉수량_목',
+        '오가닉수량_금', '오가닉수량_토', '오가닉수량_일',
+        '추세_기울기(월)',
+        '청정일수', '오가닉_분포등급', '오가닉_최신성등급', '상태',
+    ]
+    qty_summary_cols = [c for c in qty_summary_cols if c in qty_df.columns]
+    qty_summary_df = qty_df[qty_summary_cols].copy()
+
+# 시트 3: 매출 분석 상세 (회귀, lag, 단독일수 등 모두)
+sales_detail_df = result_df.copy()
+
+# 시트 4: 수량 분석 상세
+qty_detail_df = qty_df.copy() if len(qty_df) > 0 else pd.DataFrame()
+
+# 시트 5: 분석 정보 (메타데이터)
+analysis_info = pd.DataFrame([
+    ['분석 종료일', cutoff_info['cutoff'].strftime('%Y-%m-%d')],
+    ['분석 시작일', earliest_date.strftime('%Y-%m-%d')],
+    ['데이터 행수 (제품 단위)', f"{len(df_products):,}"],
+    ['분석 브랜드 수', f"{len(result_df)}"],
+    ['분석 제품 수', f"{len(qty_df)}"],
+    ['분석 성공 브랜드', f"{int((result_df['분석상태'] == '분석성공').sum())}"],
+    ['사이다 처리 행수', f"{len(df_cida_valid)}"],
+    ['사이다 결측 보정', f"{cida_info['corrected']}건"],
+], columns=['항목', '값'])
+
+# 시트 6: 용어집
+glossary_export = pd.DataFrame([
+    ['오가닉매출', '광고/마케팅 없이 발생하는 매출 (브랜드별)', '청정일 메타제외매출 평균'],
+    ['오가닉매출_최근', '추세선이 예측한 최신 시점 오가닉매출', '시간 흐름 반영값'],
+    ['오가닉매출_월~일', '요일별 청정일 매출 평균', '요일 표본 5건 이상일 때만'],
+    ['오가닉수량', '광고/마케팅 없이 발생하는 판매수량 (제품별)', '청정일 메타제외판매수량 평균'],
+    ['오가닉수량_최근', '추세선이 예측한 최신 시점 오가닉수량', ''],
+    ['청정일', '바이럴·숏폼·사이다 조회수가 모두 0인 날', '오가닉 추정 기준'],
+    ['청정일수', '청정일 총 개수', '많을수록 신뢰도 높음'],
+    ['추세_기울기(월)', '오가닉이 한 달에 변하는 양', '+ 성장 / − 감소'],
+    ['오가닉모드', '5가지 베이스라인 중 선택된 방식', '단일/요일별/시즌보정/추세/추세+요일'],
+    ['오가닉_분포등급', '청정일이 7요일에 골고루 있는지', 'HIGH: 7요일 / MEDIUM: 5~6요일 / LOW: 4↓'],
+    ['오가닉_최신성등급', '가장 최근 청정일이 얼마나 가까운지', 'HIGH: 30일↓ / MEDIUM: 31~90일 / LOW: 90일↑'],
+    ['전체R²', '모든 매체 동시 학습 회귀 설명력', '0.5↑ 신뢰 가능 / 0.3↓ 낮음'],
+    ['{매체}_가중치', '회귀 계수 (조회수 1당 매출 효과)', '음수면 0으로 클램프'],
+    ['{매체}_단독R²', '해당 매체만 단독 진행된 날 회귀 설명력', f'단독일 {MIN_SOLO_DAYS}개 이상일 때'],
+    ['마케팅기여매출', '당일매출 - 오가닉매출', '양수만 측정'],
+], columns=['용어', '정의', '비고'])
+
 buffer = BytesIO()
 with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
-    result_df.to_excel(writer, sheet_name='매출분석_브랜드별', index=False)
-    if len(qty_df) > 0:
-        qty_df.to_excel(writer, sheet_name='수량분석_제품별', index=False)
-    pd.DataFrame([
-        ['오가닉매출', '광고/마케팅 없이 발생하는 매출 (브랜드별)', '청정일 메타제외매출 평균'],
-        ['오가닉수량', '광고/마케팅 없이 발생하는 판매수량 (제품별)', '청정일 메타제외판매수량 평균'],
-        ['청정일', '바이럴·숏폼·사이다 조회수가 모두 0인 날', ''],
-        ['마케팅기여매출', '당일매출 - 오가닉매출', '양수만 측정'],
-    ], columns=['용어', '정의', '비고']).to_excel(writer, sheet_name='용어집', index=False)
+    sales_summary_df.to_excel(writer, sheet_name='요약_브랜드별_오가닉매출', index=False)
+    if len(qty_summary_df) > 0:
+        qty_summary_df.to_excel(writer, sheet_name='요약_제품별_오가닉수량', index=False)
+    sales_detail_df.to_excel(writer, sheet_name='상세_매출분석', index=False)
+    if len(qty_detail_df) > 0:
+        qty_detail_df.to_excel(writer, sheet_name='상세_수량분석', index=False)
+    analysis_info.to_excel(writer, sheet_name='분석정보', index=False)
+    glossary_export.to_excel(writer, sheet_name='용어집', index=False)
+    
+    # 열 너비 자동 조정 (가독성)
+    for sheet_name in writer.sheets:
+        ws = writer.sheets[sheet_name]
+        for col_idx, col in enumerate(ws.iter_cols(values_only=True), start=1):
+            try:
+                max_len = max(len(str(v)) for v in col if v is not None)
+                ws.column_dimensions[ws.cell(row=1, column=col_idx).column_letter].width = min(max_len + 2, 30)
+            except (ValueError, TypeError):
+                pass
+
+# 다운로드 파일명 (분석일자 포함)
+from datetime import datetime as _dt
+fname = f"마케팅기여도분석_{_dt.now().strftime('%Y%m%d')}.xlsx"
 
 st.download_button(
-    label="결과 엑셀 다운로드 (.xlsx)",
+    label="📥 결과 엑셀 다운로드 (.xlsx)",
     data=buffer.getvalue(),
-    file_name="마케팅기여도분석_결과.xlsx",
+    file_name=fname,
     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
 )
+
+with st.expander("📋 엑셀 시트 구성 안내", expanded=False):
+    st.markdown("""
+| 시트 | 내용 |
+|---|---|
+| **요약_브랜드별_오가닉매출** | 핵심 결과 — 브랜드별 오가닉매출, 요일별, 추세, 매체 가중치 |
+| **요약_제품별_오가닉수량** | 제품별 오가닉수량, 요일별, 추세 |
+| **상세_매출분석** | 모든 컬럼 (회귀샘플수, 단독일수 등 분석 메타 포함) |
+| **상세_수량분석** | 제품별 청정일 분포 등 상세 |
+| **분석정보** | 분석 기간, 데이터 행수, 사이다 처리 등 메타데이터 |
+| **용어집** | 컬럼명 정의 |
+""")
+
 st.markdown("---")
