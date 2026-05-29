@@ -409,7 +409,7 @@ st.sidebar.caption("최소 데이터 30일 / 매체 단독일 최소 20개")
 st.sidebar.markdown("---")
 st.sidebar.markdown("**일간데이터 컬럼 (위치 고정)**")
 st.sidebar.code(
-    "A 날짜\nB 브랜드\nC 제품\nL 메타제외 판매수량\nO 메타제외 매출\nT 1~3위 조회수(바이럴)\nX 숏폼 조회수",
+    "A 날짜\nB 브랜드\nC 제품\nK 메타제외 매출\nL 메타제외 판매수량\nT 1~3위 조회수(바이럴)\nX 숏폼 조회수",
     language=None
 )
 st.sidebar.markdown("**사이다 시트 컬럼**")
@@ -444,10 +444,15 @@ def col_letter_to_idx(letter):
 
 
 # 컬럼 매핑 (정확한 위치)
+# 헤더 구조: 행0=그룹헤더(병합셀, 한 칸 밀림) + 행1=컬럼명, 데이터=행2부터
 DAILY_COLMAP = {
-    '날짜': 'A', '브랜드': 'B', '제품': 'C',
-    '메타제외판매수량': 'L', '메타제외매출': 'O',
-    '바이럴조회수': 'T', '숏폼조회수': 'X',
+    '날짜': 'A',           # 0
+    '브랜드': 'B',          # 1
+    '제품': 'C',           # 2
+    '메타제외판매수량': 'L',  # 11
+    '메타제외매출': 'K',     # 10  (← 이전 O(14)는 마케팅매출이라 잘못)
+    '바이럴조회수': 'T',     # 19  (1~3위 조회수)
+    '숏폼조회수': 'X',      # 23  (숏폼 상세/조회수)
 }
 CIDA_COLMAP = {
     '브랜드': 'E', '제품': 'F', '게시일자': 'G', '채널': 'I', 'url': 'K', '조회수': 'L',
@@ -514,6 +519,36 @@ df_products = df[df['제품'] != '전체'].sort_values(by=['브랜드', '제품'
 if len(df_products) == 0:
     st.error("'전체'를 제외한 제품 행이 없습니다.")
     st.stop()
+
+# 데이터 읽기 진단 (사용자가 컬럼 매핑 확인용)
+with st.expander("📊 데이터 읽기 진단 — 컬럼 매핑 확인", expanded=(df['메타제외매출'].sum() == 0)):
+    diag_cols = st.columns(2)
+    with diag_cols[0]:
+        st.markdown("**컬럼별 합계** (0이면 위치 오류)")
+        st.write({
+            '메타제외매출 (K열)': f"{df['메타제외매출'].sum():,.0f}",
+            '메타제외판매수량 (L열)': f"{df['메타제외판매수량'].sum():,.0f}",
+            '바이럴조회수 (T열)': f"{df['바이럴조회수'].sum():,.0f}",
+            '숏폼조회수 (X열)': f"{df['숏폼조회수'].sum():,.0f}",
+        })
+    with diag_cols[1]:
+        st.markdown("**제품 단위 (전체 제외 후)**")
+        st.write({
+            '행수': f"{len(df_products):,}",
+            '브랜드 종류': list(df_products['브랜드'].unique())[:5],
+            '날짜 범위': f"{df_products['날짜'].min().strftime('%Y-%m-%d')} ~ {df_products['날짜'].max().strftime('%Y-%m-%d')}",
+        })
+
+    if df['메타제외매출'].sum() == 0:
+        st.error(
+            "**메타제외매출 합계 = 0** — K열에 매출 데이터가 없습니다.\n\n"
+            "현재 코드는 시트 구조 B (2행 헤더, K열=매출) 기준입니다.\n"
+            "업로드한 파일이 이전 구조 (1행 헤더, I열=매출)일 가능성이 큽니다.\n\n"
+            "확인:\n"
+            "1. 헤더가 2행인지 (0행=그룹헤더, 1행=컬럼명)\n"
+            "2. K열(11번째)이 '메타제외/매출'인지\n"
+            "3. 데이터는 2행부터 시작하는지"
+        )
 
 # 사이다
 try:
@@ -1043,6 +1078,7 @@ with tab1:
 
     sales_cols = [
         '브랜드',
+        '청정일수', '오가닉_분포등급', '오가닉_최신성등급',
         '오가닉매출', '오가닉매출_최근',
         '오가닉매출_월', '오가닉매출_화', '오가닉매출_수', '오가닉매출_목',
         '오가닉매출_금', '오가닉매출_토', '오가닉매출_일',
@@ -1053,8 +1089,9 @@ with tab1:
         sales_cols += [f'{m}_가중치', f'{m}_최적lag', f'{m}_단독R²']
     sales_cols.append('분석상태')
     sales_cols = [c for c in sales_cols if c in result_df.columns]
-
+    
     s = result_df[sales_cols].style
+    s = s.map(color_grade, subset=[c for c in ['오가닉_분포등급', '오가닉_최신성등급'] if c in sales_cols])
     s = s.map(color_r2, subset=[c for c in sales_cols if 'R²' in c])
     s = s.map(color_status, subset=['분석상태'])
     st.dataframe(s, use_container_width=True, height=400)
@@ -1068,10 +1105,12 @@ with tab2:
     )
     if len(qty_df) > 0:
         qty_cols = [
-            '브랜드', '제품', '오가닉수량', '오가닉수량_최근',
+            '브랜드', '제품',
+            '청정일수', '오가닉_분포등급', '오가닉_최신성등급',
+            '오가닉수량', '오가닉수량_최근',
             '오가닉수량_월', '오가닉수량_화', '오가닉수량_수', '오가닉수량_목',
             '오가닉수량_금', '오가닉수량_토', '오가닉수량_일',
-            '추세_기울기(월)', '오가닉_분포등급', '오가닉_최신성등급', '상태',
+            '추세_기울기(월)', '상태',
         ]
         qty_cols = [c for c in qty_cols if c in qty_df.columns]
         sq = qty_df[qty_cols].style
@@ -1160,8 +1199,8 @@ with tab5:
 | 날짜 | A | 날짜 |
 | 브랜드 | B | 구분/브랜드 |
 | 제품 | C | 구분/제품 |
+| 메타제외 매출 | K | 메타제외/매출 |
 | 메타제외 판매수량 | L | 메타제외/판매수량 |
-| 메타제외 매출 | O | 메타제외/매출 |
 | 바이럴 조회수 | T | 바이럴 상세/1~3위 조회수 |
 | 숏폼 조회수 | X | 숏폼 상세/조회수 |
 
